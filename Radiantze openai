@@ -1,0 +1,72 @@
+import asyncio
+import json
+import openai
+
+openai.api_key = "your_openai_api_key"
+
+# Function to calculate match score
+async def calculate_match_score_async(job_description, candidate_resume):
+    prompt = (
+        f"Match the following job description with the candidate's resume and score the compatibility on a scale of 0 to 100. "
+        f"Provide only the score as output.\n\n"
+        f"Job Description:\n{job_description}\n\n"
+        f"Candidate Resume:\n{candidate_resume}"
+    )
+    try:
+        response = await openai.ChatCompletion.acreate(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=10,
+            temperature=0
+        )
+        score = int(response['choices'][0]['message']['content'].strip())
+        return score
+    except (ValueError, KeyError):
+        return 0  # Default to 0 if the score cannot be determined
+
+# Batch process candidates
+async def process_candidates(job_description, candidates):
+    tasks = [
+        calculate_match_score_async(job_description, candidate["resume"])
+        for candidate in candidates if candidate["verified"]
+    ]
+    scores = await asyncio.gather(*tasks)
+    return [
+        {"id": candidate["id"], "name": candidate["name"], "score": score, "verified": candidate["verified"]}
+        for candidate, score in zip(candidates, scores)
+    ]
+
+# Main function
+async def main(job_id):
+    # Fetch job and candidates from database
+    job = fetch_job(job_id)
+    candidates = [
+        {"id": row[0], "name": row[1], "resume": row[2], "verified": bool(row[3])}
+        for row in fetch_candidates()
+    ]
+
+    # Process candidates
+    if job:
+        job_id, job_title, job_description = job
+        top_candidates = await process_candidates(job_description, candidates)
+        top_candidates = sorted(top_candidates, key=lambda x: x["score"], reverse=True)
+
+        # Display results
+        result = {
+            "job_id": job_id,
+            "job_title": job_title,
+            "top_candidates": top_candidates[:10]  # Limit to top 10 candidates
+        }
+        print(json.dumps(result, indent=4))
+    else:
+        print("Job not found.")
+
+    # Close database connection
+    close_connection()
+
+# Run the program
+job_id_to_match = 101  # Replace with the job ID to process
+asyncio.run(main(job_id_to_match))
